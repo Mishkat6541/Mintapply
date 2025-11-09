@@ -8,13 +8,23 @@ import path from 'path';
 import Stripe from 'stripe';
 import OpenAI from 'openai';
 
+// Debug logging
+console.log('🔧 Environment check:');
+console.log('PORT:', process.env.PORT);
+console.log('OPENAI_API_KEY present:', !!process.env.OPENAI_API_KEY);
+console.log('OPENAI_API_KEY (first 20 chars):', process.env.OPENAI_API_KEY?.substring(0, 20) + '...');
+console.log('ALLOWED_ORIGIN:', process.env.ALLOWED_ORIGIN);
+
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', { apiVersion: '2024-06-20' });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const app = express();
 app.use(morgan('tiny'));
 app.use(express.json({ limit: '1mb' }));
-app.use(cors({ origin: process.env.ALLOWED_ORIGIN || '*' }));
+app.use(cors({ 
+  origin: true, // Allow all origins for debugging
+  credentials: true 
+}));
 
 const DB_PATH = path.join(process.cwd(), 'db.json');
 function loadDB(){
@@ -86,13 +96,21 @@ app.post('/stripe/webhook', express.raw({type:'application/json'}), (req, res) =
 // LLM generation endpoint: consumes 1 token and returns letter text
 app.post('/v1/generate', async (req, res) => {
   const { title = '', jd = '', uid = 'anonymous' } = req.body || {};
+  console.log('🤖 Cover letter generation request:', { title, jd: jd.substring(0, 100) + '...', uid });
+  
   try {
+    const balanceBefore = getBalance(uid);
+    console.log('💰 Current balance for', uid, ':', balanceBefore);
+    
     consumeToken(uid);
+    console.log('✅ Token consumed successfully');
   } catch (e) {
+    console.log('❌ No tokens available for', uid);
     return res.status(402).json({ error: 'No tokens' });
   }
 
   try {
+    console.log('🧠 Generating cover letter with OpenAI...');
     const prompt = `You are Mintapply, generating a 1-page cover letter. Role: ${title}.
 Company context: derive from JD if present.
 Job description (may be long):
@@ -111,10 +129,12 @@ Write a concise, confident cover letter for Mishkat Rahman Mazumder, CS undergra
     });
 
     const text = completion.choices[0].message.content.trim();
+    console.log('✅ Cover letter generated successfully, length:', text.length);
     return res.json({ text });
   } catch (e) {
-    console.error(e);
-    return res.status(500).send('LLM error');
+    console.error('❌ OpenAI API error:', e.message);
+    console.error('Error details:', e);
+    return res.status(500).json({ error: 'LLM error: ' + e.message });
   }
 });
 

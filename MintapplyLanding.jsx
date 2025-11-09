@@ -35,17 +35,28 @@ const api = {
   // Generate cover letter
   generateCoverLetter: async (title, jd, uid = 'anonymous') => {
     try {
+      console.log('🚀 Sending cover letter request:', { title, jd: jd.substring(0, 50) + '...', uid });
       const response = await fetch(`${API_BASE_URL}/v1/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title, jd, uid })
       });
       
+      console.log('📡 Response status:', response.status);
+      
       if (response.status === 402) {
         throw new Error('No tokens available');
       }
       
-      return await response.json();
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ API error:', response.status, errorText);
+        throw new Error(`API error: ${response.status} ${errorText}`);
+      }
+      
+      const result = await response.json();
+      console.log('✅ Cover letter generated:', result);
+      return result;
     } catch (error) {
       console.error('Cover letter generation failed:', error);
       throw error;
@@ -141,13 +152,18 @@ const CoverLetterDemo = () => {
     setCoverLetter('');
     
     try {
+      console.log('🎯 Starting cover letter generation...');
       const result = await api.generateCoverLetter(jobTitle, jobDescription);
       setCoverLetter(result.text);
+      setMessage('✅ Cover letter generated successfully!');
     } catch (error) {
+      console.error('❌ Cover letter generation error:', error);
       if (error.message.includes('No tokens')) {
         setMessage('❌ No tokens available. Please purchase or redeem tokens first.');
+      } else if (error.message.includes('fetch')) {
+        setMessage('❌ Connection error. Please check if the backend is running.');
       } else {
-        setMessage('❌ Failed to generate cover letter. Please try again.');
+        setMessage(`❌ Failed to generate cover letter: ${error.message}`);
       }
     }
     

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mintapply API Test</title>
+</head>
+<body>
+    <h1>Mintapply API Test</h1>
+    <button onclick="testHealth()">Test Health</button>
+    <button onclick="testGenerate()">Test Cover Letter</button>
+    <div id="result"></div>
+
+    <script>
+        const API_BASE = 'http://localhost:3001';
+        
+        async function testHealth() {
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                const data = await response.json();
+                document.getElementById('result').innerHTML = `<pre>Health: ${JSON.stringify(data, null, 2)}</pre>`;
+            } catch (error) {
+                document.getElementById('result').innerHTML = `<pre>Health Error: ${error.message}</pre>`;
+            }
+        }
+        
+        async function testGenerate() {
+            try {
+                console.log('Testing cover letter generation...');
+                const response = await fetch(`${API_BASE}/v1/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: 'Test Engineer',
+                        jd: 'We need a test engineer',
+                        uid: 'anonymous'
+                    })
+                });
+                
+                const data = await response.json();
+                document.getElementById('result').innerHTML = `<pre>Generate: ${JSON.stringify(data, null, 2)}</pre>`;
+            } catch (error) {
+                document.getElementById('result').innerHTML = `<pre>Generate Error: ${error.message}</pre>`;
+            }
+        }
+    </script>
+</body>
+</html>
