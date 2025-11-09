@@ -1,5 +1,62 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Check, Shield, Rocket, Zap, MousePointerClick, Settings2, Lock, Stars, ArrowRight, Menu, X, Chrome, CreditCard, Workflow, Github } from "lucide-react";
+
+// Backend API configuration
+const API_BASE_URL = 'http://localhost:3001';
+
+// API functions
+const api = {
+  // Check backend health
+  checkHealth: async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/health`);
+      return await response.json();
+    } catch (error) {
+      console.error('Backend health check failed:', error);
+      return { ok: false };
+    }
+  },
+  
+  // Redeem a code for tokens
+  redeemCode: async (code, uid = 'anonymous') => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/redeem`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, uid })
+      });
+      return await response.json();
+    } catch (error) {
+      console.error('Token redemption failed:', error);
+      throw error;
+    }
+  },
+  
+  // Generate cover letter
+  generateCoverLetter: async (title, jd, uid = 'anonymous') => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/v1/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, jd, uid })
+      });
+      
+      if (response.status === 402) {
+        throw new Error('No tokens available');
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('Cover letter generation failed:', error);
+      throw error;
+    }
+  },
+  
+  // Redirect to checkout (Stripe)
+  redirectToCheckout: () => {
+    window.open(`${API_BASE_URL}/checkout`, '_blank');
+  }
+};
 
 // Mint palette
 const mint = {
@@ -20,6 +77,127 @@ const Logo = ({ className = "w-8 h-8" }) => (
   </div>
 );
 
+const TokenRedemption = ({ onTokensUpdated }) => {
+  const [code, setCode] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const handleRedeem = async (e) => {
+    e.preventDefault();
+    if (!code.trim()) return;
+    
+    setLoading(true);
+    setMessage('');
+    
+    try {
+      const result = await api.redeemCode(code.trim());
+      setMessage(`✅ Success! You now have ${result.tokens} tokens.`);
+      setCode('');
+      if (onTokensUpdated) onTokensUpdated(result.tokens);
+    } catch (error) {
+      setMessage('❌ Invalid or expired code. Try again.');
+    }
+    
+    setLoading(false);
+  };
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+      <h4 className="mb-3 text-sm font-medium text-white">Redeem Code</h4>
+      <form onSubmit={handleRedeem} className="space-y-3">
+        <input
+          type="text"
+          placeholder="Enter redemption code (e.g., MINT10)"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-white placeholder-white/30 outline-none focus:border-white/30"
+          disabled={loading}
+        />
+        <button
+          type="submit"
+          disabled={loading || !code.trim()}
+          className="w-full rounded-lg bg-white px-3 py-2 text-sm font-medium text-slate-900 disabled:opacity-50"
+        >
+          {loading ? 'Redeeming...' : 'Redeem Code'}
+        </button>
+      </form>
+      {message && (
+        <p className="mt-2 text-xs text-white/70">{message}</p>
+      )}
+    </div>
+  );
+};
+
+const CoverLetterDemo = () => {
+  const [jobTitle, setJobTitle] = useState('Software Engineer Intern');
+  const [jobDescription, setJobDescription] = useState('We are looking for a passionate software engineering intern to join our team. You will work on React, Node.js, and AWS technologies while collaborating with senior engineers.');
+  const [coverLetter, setCoverLetter] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const handleGenerate = async () => {
+    setLoading(true);
+    setMessage('');
+    setCoverLetter('');
+    
+    try {
+      const result = await api.generateCoverLetter(jobTitle, jobDescription);
+      setCoverLetter(result.text);
+    } catch (error) {
+      if (error.message.includes('No tokens')) {
+        setMessage('❌ No tokens available. Please purchase or redeem tokens first.');
+      } else {
+        setMessage('❌ Failed to generate cover letter. Please try again.');
+      }
+    }
+    
+    setLoading(false);
+  };
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-4">
+      <h4 className="text-sm font-medium text-white">AI Cover Letter Generator</h4>
+      
+      <div className="space-y-3">
+        <input
+          type="text"
+          placeholder="Job Title"
+          value={jobTitle}
+          onChange={(e) => setJobTitle(e.target.value)}
+          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-white placeholder-white/30 outline-none focus:border-white/30"
+        />
+        
+        <textarea
+          placeholder="Job Description"
+          value={jobDescription}
+          onChange={(e) => setJobDescription(e.target.value)}
+          rows={3}
+          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-white placeholder-white/30 outline-none focus:border-white/30 resize-none"
+        />
+        
+        <button
+          onClick={handleGenerate}
+          disabled={loading || !jobTitle.trim()}
+          className="w-full rounded-lg bg-white px-3 py-2 text-sm font-medium text-slate-900 disabled:opacity-50"
+        >
+          {loading ? 'Generating...' : 'Generate Cover Letter (1 Token)'}
+        </button>
+      </div>
+
+      {message && (
+        <p className="text-xs text-white/70">{message}</p>
+      )}
+
+      {coverLetter && (
+        <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+          <h5 className="mb-2 text-xs font-medium text-white">Generated Cover Letter:</h5>
+          <div className="text-xs text-white/80 whitespace-pre-wrap">{coverLetter}</div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const Badge = ({ children }) => (
   <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/80">
     {children}
@@ -32,7 +210,23 @@ const Container = ({ children }) => (
 
 const Nav = () => {
   const [open, setOpen] = useState(false);
+  const [backendStatus, setBackendStatus] = useState('checking');
+  
+  useEffect(() => {
+    api.checkHealth().then(result => {
+      setBackendStatus(result.ok ? 'online' : 'offline');
+    }).catch(() => {
+      setBackendStatus('offline');
+    });
+  }, []);
+  
   const link = "text-white/80 hover:text-white transition";
+  const statusColors = {
+    checking: 'bg-yellow-500',
+    online: 'bg-green-500',
+    offline: 'bg-red-500'
+  };
+  
   return (
     <header className="fixed inset-x-0 top-0 z-50 border-b border-white/10 backdrop-blur bg-slate-900/70">
       <Container>
@@ -40,6 +234,10 @@ const Nav = () => {
           <a href="#home" className="flex items-center gap-3">
             <Logo />
             <span className="text-lg font-semibold text-white">Mintapply</span>
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${statusColors[backendStatus]}`} title={`Backend ${backendStatus}`}/>
+              <span className="text-xs text-white/60">API</span>
+            </div>
           </a>
           <nav className="hidden md:flex items-center gap-8">
             <a href="#features" className={link}>Features</a>
@@ -123,16 +321,7 @@ const Hero = () => (
                   <button className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-900">Autofill</button>
                 </div>
               </div>
-              <div className="rounded-xl border border-white/10 bg-slate-900/50 p-4">
-                <div className="mb-3 text-sm font-medium text-white">AI Cover Letter</div>
-                <div className="grid gap-2">
-                  <div className="rounded-lg border border-white/10 bg-white/5 p-3 text-sm text-white/70">Tailoring to: Software Engineer Intern — skills: React, Node.js, AWS; values: customer‑obsessed, ownership…</div>
-                  <div className="flex justify-end gap-2">
-                    <button className="rounded-lg border border-white/20 px-3 py-2 text-sm text-white/90">Regenerate</button>
-                    <button className="rounded-lg bg-white px-3 py-2 text-sm font-medium text-slate-900">Insert</button>
-                  </div>
-                </div>
-              </div>
+              <CoverLetterDemo />
             </div>
           </div>
         </div>
@@ -204,60 +393,80 @@ const Steps = () => (
   </section>
 );
 
-const Pricing = () => (
-  <section id="pricing" className="py-20">
-    <Container>
-      <div className="mx-auto max-w-3xl text-center">
-        <Badge><CreditCard className="w-4 h-4"/> Pricing</Badge>
-        <h2 className="mt-3 text-3xl font-bold text-white">Start free. Scale with tokens.</h2>
-        <p className="mt-3 text-white/70">Great for students, power applicants, and pros. Only pay when you need AI cover letters.</p>
-      </div>
-      <div className="mt-10 grid gap-6 lg:grid-cols-3">
-        {[{
-          name: "Free",
-          price: "£0",
-          note: "No credit card",
-          features: ["Unlimited autofill","Basic scraping","Local storage"],
-          cta: "Get started",
-          highlight: false
-        },{
-          name: "Mint Tokens",
-          price: "£5",
-          note: "per 50 tokens",
-          features: ["AI cover letters","Tone presets","Role‑aware tailoring"],
-          cta: "Buy tokens",
-          highlight: true
-        },{
-          name: "Pro",
-          price: "£9/mo",
-          note: "Optional subscription",
-          features: ["Cloud sync","Custom templates","Priority support"],
-          cta: "Go Pro",
-          highlight: false
-        }].map((tier)=> (
-          <div key={tier.name} className={`rounded-2xl border p-6 ${tier.highlight? "border-white/40 bg-white/10" : "border-white/10 bg-white/5"}`}>
-            <div className="flex items-baseline justify-between">
-              <h3 className="text-lg font-semibold text-white">{tier.name}</h3>
-              <span className="text-sm text-white/60">{tier.note}</span>
+const Pricing = () => {
+  const [tokens, setTokens] = useState(0);
+
+  return (
+    <section id="pricing" className="py-20">
+      <Container>
+        <div className="mx-auto max-w-3xl text-center">
+          <Badge><CreditCard className="w-4 h-4"/> Pricing</Badge>
+          <h2 className="mt-3 text-3xl font-bold text-white">Start free. Scale with tokens.</h2>
+          <p className="mt-3 text-white/70">Great for students, power applicants, and pros. Only pay when you need AI cover letters.</p>
+        </div>
+        <div className="mt-10 grid gap-6 lg:grid-cols-3">
+          {[{
+            name: "Free",
+            price: "£0",
+            note: "No credit card",
+            features: ["Unlimited autofill","Basic scraping","Local storage"],
+            cta: "Get started",
+            highlight: false,
+            action: () => window.open('https://chrome.google.com/webstore', '_blank')
+          },{
+            name: "Mint Tokens",
+            price: "£5",
+            note: "per 50 tokens",
+            features: ["AI cover letters","Tone presets","Role‑aware tailoring"],
+            cta: "Buy tokens",
+            highlight: true,
+            action: () => api.redirectToCheckout()
+          },{
+            name: "Pro",
+            price: "£9/mo",
+            note: "Optional subscription",
+            features: ["Cloud sync","Custom templates","Priority support"],
+            cta: "Go Pro",
+            highlight: false,
+            action: () => api.redirectToCheckout()
+          }].map((tier)=> (
+            <div key={tier.name} className={`rounded-2xl border p-6 ${tier.highlight? "border-white/40 bg-white/10" : "border-white/10 bg-white/5"}`}>
+              <div className="flex items-baseline justify-between">
+                <h3 className="text-lg font-semibold text-white">{tier.name}</h3>
+                <span className="text-sm text-white/60">{tier.note}</span>
+              </div>
+              <div className="mt-4 flex items-end gap-2">
+                <div className="text-3xl font-extrabold text-white">{tier.price}</div>
+              </div>
+              <ul className="mt-6 space-y-2 text-white/80">
+                {tier.features.map(f => (
+                  <li key={f} className="flex items-start gap-2"><Check className="mt-0.5 h-4 w-4" style={{ color: mint.mid }} /><span>{f}</span></li>
+                ))}
+              </ul>
+              <button
+                onClick={tier.action}
+                className={`mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2 font-medium ${tier.highlight? "bg-white text-slate-900" : "border border-white/20 text-white hover:bg-white/5"}`}
+              >
+                {tier.cta}
+                <ArrowRight className="h-4 w-4"/>
+              </button>
             </div>
-            <div className="mt-4 flex items-end gap-2">
-              <div className="text-3xl font-extrabold text-white">{tier.price}</div>
+          ))}
+        </div>
+        
+        {/* Token Redemption Section */}
+        <div className="mt-10 mx-auto max-w-md">
+          <TokenRedemption onTokensUpdated={setTokens} />
+          {tokens > 0 && (
+            <div className="mt-3 text-center text-sm text-white/70">
+              Current balance: <span className="font-medium text-white">{tokens} tokens</span>
             </div>
-            <ul className="mt-6 space-y-2 text-white/80">
-              {tier.features.map(f => (
-                <li key={f} className="flex items-start gap-2"><Check className="mt-0.5 h-4 w-4" style={{ color: mint.mid }} /><span>{f}</span></li>
-              ))}
-            </ul>
-            <a href="#install" className={`mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2 font-medium ${tier.highlight? "bg-white text-slate-900" : "border border-white/20 text-white hover:bg-white/5"}`}>
-              {tier.cta}
-              <ArrowRight className="h-4 w-4"/>
-            </a>
-          </div>
-        ))}
-      </div>
-    </Container>
-  </section>
-);
+          )}
+        </div>
+      </Container>
+    </section>
+  );
+};
 
 const FAQ = () => (
   <section id="faq" className="py-20">
