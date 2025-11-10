@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Check, Shield, Rocket, Zap, MousePointerClick, Settings2, Lock, Stars, ArrowRight, Menu, X, Chrome, CreditCard, Workflow, Github } from "lucide-react";
+import { Check, Shield, Rocket, Zap, MousePointerClick, Settings2, Lock, Stars, ArrowRight, Menu, X, Chrome, CreditCard, Workflow, Github, User, LogOut } from "lucide-react";
 
 // Backend API configuration
 const API_BASE_URL = 'http://localhost:3001';
@@ -17,29 +17,66 @@ const api = {
     }
   },
   
-  // Redeem a code for tokens
-  redeemCode: async (code, uid = 'anonymous') => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/redeem`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, uid })
-      });
-      return await response.json();
-    } catch (error) {
-      console.error('Token redemption failed:', error);
-      throw error;
-    }
+  // Register new user
+  register: async (email, password, name) => {
+    const response = await fetch(`${API_BASE_URL}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, name })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Registration failed');
+    return data;
   },
   
-  // Generate cover letter
-  generateCoverLetter: async (title, jd, uid = 'anonymous') => {
+  // Login user
+  login: async (email, password) => {
+    const response = await fetch(`${API_BASE_URL}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Login failed');
+    return data;
+  },
+  
+  // Get current user
+  getCurrentUser: async (token) => {
+    const response = await fetch(`${API_BASE_URL}/auth/me`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Failed to get user');
+    return data;
+  },
+  
+  // Redeem a code for tokens (protected)
+  redeemCode: async (code, token) => {
+    const response = await fetch(`${API_BASE_URL}/redeem`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ code })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Redemption failed');
+    return data;
+  },
+  
+  // Generate cover letter (protected)
+  generateCoverLetter: async (title, jd, token) => {
     try {
-      console.log('🚀 Sending cover letter request:', { title, jd: jd.substring(0, 50) + '...', uid });
+      console.log('🚀 Sending cover letter request:', { title, jd: jd.substring(0, 50) + '...' });
       const response = await fetch(`${API_BASE_URL}/v1/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, jd, uid })
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ title, jd })
       });
       
       console.log('📡 Response status:', response.status);
@@ -63,7 +100,22 @@ const api = {
     }
   },
   
-  // Redirect to checkout (Stripe)
+  // Create Stripe checkout session
+  createCheckoutSession: async (packageType, token) => {
+    const response = await fetch(`${API_BASE_URL}/create-checkout-session`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ packageType })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Failed to create checkout');
+    return data;
+  },
+  
+  // Redirect to checkout (legacy - keeping for compatibility)
   redirectToCheckout: () => {
     window.open(`${API_BASE_URL}/checkout`, '_blank');
   }
@@ -92,21 +144,35 @@ const TokenRedemption = ({ onTokensUpdated }) => {
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const authToken = localStorage.getItem('authToken');
 
   const handleRedeem = async (e) => {
     e.preventDefault();
     if (!code.trim()) return;
+
+    if (!authToken) {
+      setMessage('❌ Please login to redeem codes.');
+      return;
+    }
     
     setLoading(true);
     setMessage('');
     
     try {
-      const result = await api.redeemCode(code.trim());
+      const result = await api.redeemCode(code.trim(), authToken);
       setMessage(`✅ Success! You now have ${result.tokens} tokens.`);
       setCode('');
       if (onTokensUpdated) onTokensUpdated(result.tokens);
+      
+      // Update user data in localStorage
+      const userData = JSON.parse(localStorage.getItem('userData') || '{}');
+      userData.tokens = result.tokens;
+      localStorage.setItem('userData', JSON.stringify(userData));
+      
+      // Dispatch custom event to update nav
+      window.dispatchEvent(new CustomEvent('tokenUpdate', { detail: { tokens: result.tokens } }));
     } catch (error) {
-      setMessage('❌ Invalid or expired code. Try again.');
+      setMessage(`❌ ${error.message}`);
     }
     
     setLoading(false);
@@ -118,7 +184,7 @@ const TokenRedemption = ({ onTokensUpdated }) => {
       <form onSubmit={handleRedeem} className="space-y-3">
         <input
           type="text"
-          placeholder="Enter redemption code (e.g., MINT10)"
+          placeholder="Enter redemption code (e.g., MINT25)"
           value={code}
           onChange={(e) => setCode(e.target.value)}
           className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-white placeholder-white/30 outline-none focus:border-white/30"
@@ -135,27 +201,46 @@ const TokenRedemption = ({ onTokensUpdated }) => {
       {message && (
         <p className="mt-2 text-xs text-white/70">{message}</p>
       )}
+      {!authToken && (
+        <p className="mt-2 text-xs text-white/50">Login required to redeem codes</p>
+      )}
     </div>
   );
 };
 
-const CoverLetterDemo = () => {
+const CoverLetterDemo = ({ onTokenUpdate }) => {
   const [jobTitle, setJobTitle] = useState('Software Engineer Intern');
   const [jobDescription, setJobDescription] = useState('We are looking for a passionate software engineering intern to join our team. You will work on React, Node.js, and AWS technologies while collaborating with senior engineers.');
   const [coverLetter, setCoverLetter] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const authToken = localStorage.getItem('authToken');
 
   const handleGenerate = async () => {
+    if (!authToken) {
+      setMessage('❌ Please login to generate cover letters.');
+      return;
+    }
+
     setLoading(true);
     setMessage('');
     setCoverLetter('');
     
     try {
       console.log('🎯 Starting cover letter generation...');
-      const result = await api.generateCoverLetter(jobTitle, jobDescription);
+      const result = await api.generateCoverLetter(jobTitle, jobDescription, authToken);
       setCoverLetter(result.text);
-      setMessage('✅ Cover letter generated successfully!');
+      setMessage(`✅ Cover letter generated! ${result.tokensRemaining !== undefined ? `${result.tokensRemaining} tokens remaining` : ''}`);
+      
+      // Update user tokens in localStorage
+      if (result.tokensRemaining !== undefined) {
+        const userData = JSON.parse(localStorage.getItem('userData') || '{}');
+        userData.tokens = result.tokensRemaining;
+        localStorage.setItem('userData', JSON.stringify(userData));
+        
+        // Dispatch custom event to update nav
+        window.dispatchEvent(new CustomEvent('tokenUpdate', { detail: { tokens: result.tokensRemaining } }));
+      }
     } catch (error) {
       console.error('❌ Cover letter generation error:', error);
       if (error.message.includes('No tokens')) {
@@ -163,7 +248,7 @@ const CoverLetterDemo = () => {
       } else if (error.message.includes('fetch')) {
         setMessage('❌ Connection error. Please check if the backend is running.');
       } else {
-        setMessage(`❌ Failed to generate cover letter: ${error.message}`);
+        setMessage(`❌ Failed to generate: ${error.message}`);
       }
     }
     
@@ -193,7 +278,7 @@ const CoverLetterDemo = () => {
         
         <button
           onClick={handleGenerate}
-          disabled={loading || !jobTitle.trim()}
+          disabled={loading || !jobTitle.trim() || !authToken}
           className="w-full rounded-lg bg-white px-3 py-2 text-sm font-medium text-slate-900 disabled:opacity-50"
         >
           {loading ? 'Generating...' : 'Generate Cover Letter (1 Token)'}
@@ -202,6 +287,10 @@ const CoverLetterDemo = () => {
 
       {message && (
         <p className="text-xs text-white/70">{message}</p>
+      )}
+
+      {!authToken && (
+        <p className="text-xs text-white/50">Login required to generate cover letters</p>
       )}
 
       {coverLetter && (
@@ -224,9 +313,146 @@ const Container = ({ children }) => (
   <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">{children}</div>
 );
 
+// Auth Modal Component
+const AuthModal = ({ isOpen, onClose, onAuthSuccess }) => {
+  const [mode, setMode] = useState('login'); // 'login' or 'register'
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      let result;
+      if (mode === 'register') {
+        result = await api.register(email, password, name);
+      } else {
+        result = await api.login(email, password);
+      }
+      
+      // Save token and user data
+      localStorage.setItem('authToken', result.token);
+      localStorage.setItem('userData', JSON.stringify(result.user));
+      
+      onAuthSuccess(result.token, result.user);
+      onClose();
+      
+      // Reset form
+      setEmail('');
+      setPassword('');
+      setName('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="relative w-full max-w-md m-4" onClick={(e) => e.stopPropagation()}>
+        <div className="rounded-2xl border border-white/10 bg-slate-800 p-6 shadow-2xl">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-2xl font-bold text-white">
+              {mode === 'login' ? 'Welcome back' : 'Create account'}
+            </h2>
+            <button onClick={onClose} className="text-white/60 hover:text-white">
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+
+          {error && (
+            <div className="mb-4 rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-400">
+              {error}
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {mode === 'register' && (
+              <div>
+                <label className="block text-sm font-medium text-white/80 mb-2">Name</label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-white placeholder-white/30 outline-none focus:border-white/30"
+                  placeholder="Your name"
+                  required
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-white/80 mb-2">Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-white placeholder-white/30 outline-none focus:border-white/30"
+                placeholder="your@email.com"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-white/80 mb-2">Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-white placeholder-white/30 outline-none focus:border-white/30"
+                placeholder="••••••••"
+                minLength={6}
+                required
+              />
+              {mode === 'register' && (
+                <p className="mt-1 text-xs text-white/50">Minimum 6 characters</p>
+              )}
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full rounded-lg bg-white px-4 py-3 font-medium text-slate-900 hover:opacity-90 disabled:opacity-50"
+              style={{ background: loading ? '#ccc' : mint.brand }}
+            >
+              {loading ? 'Please wait...' : (mode === 'login' ? 'Login' : 'Create account')}
+            </button>
+          </form>
+
+          <div className="mt-4 text-center">
+            <button
+              onClick={() => {
+                setMode(mode === 'login' ? 'register' : 'login');
+                setError('');
+              }}
+              className="text-sm text-white/60 hover:text-white"
+            >
+              {mode === 'login' ? "Don't have an account? Register" : 'Already have an account? Login'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const Nav = () => {
   const [open, setOpen] = useState(false);
   const [backendStatus, setBackendStatus] = useState('checking');
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authToken, setAuthToken] = useState(localStorage.getItem('authToken'));
+  const [user, setUser] = useState(() => {
+    const saved = localStorage.getItem('userData');
+    return saved ? JSON.parse(saved) : null;
+  });
   
   useEffect(() => {
     api.checkHealth().then(result => {
@@ -234,7 +460,45 @@ const Nav = () => {
     }).catch(() => {
       setBackendStatus('offline');
     });
+
+    // Check if user is logged in
+    if (authToken) {
+      api.getCurrentUser(authToken)
+        .then(userData => setUser(userData))
+        .catch(() => {
+          // Token invalid, clear it
+          handleLogout();
+        });
+    }
+
+    // Listen for token updates
+    const handleTokenUpdate = (event) => {
+      setUser(prevUser => {
+        if (prevUser) {
+          return { ...prevUser, tokens: event.detail.tokens };
+        }
+        return prevUser;
+      });
+    };
+
+    window.addEventListener('tokenUpdate', handleTokenUpdate);
+    
+    return () => {
+      window.removeEventListener('tokenUpdate', handleTokenUpdate);
+    };
   }, []);
+  
+  const handleAuthSuccess = (token, userData) => {
+    setAuthToken(token);
+    setUser(userData);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('userData');
+    setAuthToken(null);
+    setUser(null);
+  };
   
   const link = "text-white/80 hover:text-white transition";
   const statusColors = {
@@ -244,43 +508,102 @@ const Nav = () => {
   };
   
   return (
-    <header className="fixed inset-x-0 top-0 z-50 border-b border-white/10 backdrop-blur bg-slate-900/70">
-      <Container>
-        <div className="flex h-16 items-center justify-between">
-          <a href="#home" className="flex items-center gap-3">
-            <Logo />
-            <span className="text-lg font-semibold text-white">Mintapply</span>
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${statusColors[backendStatus]}`} title={`Backend ${backendStatus}`}/>
-              <span className="text-xs text-white/60">API</span>
-            </div>
-          </a>
-          <nav className="hidden md:flex items-center gap-8">
-            <a href="#features" className={link}>Features</a>
-            <a href="#how" className={link}>How it works</a>
-            <a href="#pricing" className={link}>Pricing</a>
-            <a href="#faq" className={link}>FAQ</a>
-            <a href="#install" className="rounded-full bg-white text-slate-900 font-medium px-4 py-2 hover:opacity-90 transition flex items-center gap-2"><Chrome className="w-4 h-4"/>Get Extension</a>
-          </nav>
-          <button className="md:hidden p-2 text-white" onClick={() => setOpen(!open)} aria-label="Toggle menu">{open? <X/> : <Menu/>}</button>
-        </div>
-        {open && (
-          <div className="md:hidden pb-4 space-y-2">
-            {[
-              ["#features","Features"],
-              ["#how","How it works"],
-              ["#pricing","Pricing"],
-              ["#faq","FAQ"],
-            ].map(([href,label]) => (
-              <a key={href} href={href} className="block rounded-lg px-3 py-2 text-white/80 hover:bg-white/5" onClick={()=>setOpen(false)}>{label}</a>
-            ))}
-            <a href="#install" className="block rounded-lg px-3 py-2 bg-white text-slate-900 font-medium" onClick={()=>setOpen(false)}>
-              Get Extension
+    <>
+      <header className="fixed inset-x-0 top-0 z-50 border-b border-white/10 backdrop-blur bg-slate-900/70">
+        <Container>
+          <div className="flex h-16 items-center justify-between">
+            <a href="#home" className="flex items-center gap-3">
+              <Logo />
+              <span className="text-lg font-semibold text-white">Mintapply</span>
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${statusColors[backendStatus]}`} title={`Backend ${backendStatus}`}/>
+                <span className="text-xs text-white/60">API</span>
+              </div>
             </a>
+            <nav className="hidden md:flex items-center gap-8">
+              <a href="#features" className={link}>Features</a>
+              <a href="#how" className={link}>How it works</a>
+              <a href="#pricing" className={link}>Pricing</a>
+              <a href="#faq" className={link}>FAQ</a>
+              
+              {user ? (
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 rounded-full border border-white/20 px-3 py-1.5 text-sm">
+                    <User className="w-4 h-4" style={{ color: mint.mid }} />
+                    <span className="text-white/80">{user.name}</span>
+                    <span className="text-white/50">•</span>
+                    <span className="font-medium" style={{ color: mint.brand }}>{user.tokens} tokens</span>
+                  </div>
+                  <button
+                    onClick={handleLogout}
+                    className="rounded-full border border-white/20 p-2 text-white/80 hover:bg-white/5"
+                    title="Logout"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowAuthModal(true)}
+                  className="rounded-full bg-white text-slate-900 font-medium px-4 py-2 hover:opacity-90 transition flex items-center gap-2"
+                >
+                  <User className="w-4 h-4"/>Login
+                </button>
+              )}
+              
+              <a href="#install" className="rounded-full border border-white/20 px-4 py-2 text-white/90 hover:bg-white/5 transition flex items-center gap-2">
+                <Chrome className="w-4 h-4"/>Get Extension
+              </a>
+            </nav>
+            <button className="md:hidden p-2 text-white" onClick={() => setOpen(!open)} aria-label="Toggle menu">{open? <X/> : <Menu/>}</button>
           </div>
-        )}
-      </Container>
-    </header>
+          {open && (
+            <div className="md:hidden pb-4 space-y-2">
+              {[
+                ["#features","Features"],
+                ["#how","How it works"],
+                ["#pricing","Pricing"],
+                ["#faq","FAQ"],
+              ].map(([href,label]) => (
+                <a key={href} href={href} className="block rounded-lg px-3 py-2 text-white/80 hover:bg-white/5" onClick={()=>setOpen(false)}>{label}</a>
+              ))}
+              {user ? (
+                <>
+                  <div className="flex items-center gap-2 rounded-lg px-3 py-2 bg-white/5">
+                    <User className="w-4 h-4" style={{ color: mint.mid }} />
+                    <span className="text-white/80">{user.name}</span>
+                    <span className="text-white/50">•</span>
+                    <span className="font-medium" style={{ color: mint.brand }}>{user.tokens} tokens</span>
+                  </div>
+                  <button
+                    onClick={() => {handleLogout(); setOpen(false);}}
+                    className="block w-full rounded-lg px-3 py-2 bg-red-500/20 text-red-400 font-medium text-left"
+                  >
+                    Logout
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => {setShowAuthModal(true); setOpen(false);}}
+                  className="block w-full rounded-lg px-3 py-2 bg-white text-slate-900 font-medium"
+                >
+                  Login / Register
+                </button>
+              )}
+              <a href="#install" className="block rounded-lg px-3 py-2 border border-white/20 text-white font-medium" onClick={()=>setOpen(false)}>
+                Get Extension
+              </a>
+            </div>
+          )}
+        </Container>
+      </header>
+
+      <AuthModal 
+        isOpen={showAuthModal} 
+        onClose={() => setShowAuthModal(false)}
+        onAuthSuccess={handleAuthSuccess}
+      />
+    </>
   );
 };
 
@@ -411,6 +734,25 @@ const Steps = () => (
 
 const Pricing = () => {
   const [tokens, setTokens] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const authToken = localStorage.getItem('authToken');
+
+  const handleBuyTokens = async (packageType) => {
+    if (!authToken) {
+      alert('Please login to purchase tokens');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { url } = await api.createCheckoutSession(packageType, authToken);
+      // Redirect to Stripe Checkout
+      window.location.href = url;
+    } catch (error) {
+      alert('Failed to create checkout session: ' + error.message);
+      setLoading(false);
+    }
+  };
 
   return (
     <section id="pricing" className="py-20">
@@ -422,29 +764,32 @@ const Pricing = () => {
         </div>
         <div className="mt-10 grid gap-6 lg:grid-cols-3">
           {[{
-            name: "Free",
-            price: "£0",
-            note: "No credit card",
-            features: ["Unlimited autofill","Basic scraping","Local storage"],
-            cta: "Get started",
-            highlight: false,
-            action: () => window.open('https://chrome.google.com/webstore', '_blank')
-          },{
-            name: "Mint Tokens",
+            name: "Starter Pack",
             price: "£5",
-            note: "per 50 tokens",
-            features: ["AI cover letters","Tone presets","Role‑aware tailoring"],
-            cta: "Buy tokens",
-            highlight: true,
-            action: () => api.redirectToCheckout()
-          },{
-            name: "Pro",
-            price: "£9/mo",
-            note: "Optional subscription",
-            features: ["Cloud sync","Custom templates","Priority support"],
-            cta: "Go Pro",
+            tokens: 50,
+            note: "10p per token",
+            features: ["50 AI cover letters","Email support","7-day validity"],
+            cta: "Buy 50 tokens",
             highlight: false,
-            action: () => api.redirectToCheckout()
+            packageType: 'small'
+          },{
+            name: "Popular",
+            price: "£10",
+            tokens: 150,
+            note: "6.6p per token",
+            features: ["150 AI cover letters","Priority support","30-day validity","Best value"],
+            cta: "Buy 150 tokens",
+            highlight: true,
+            packageType: 'medium'
+          },{
+            name: "Power User",
+            price: "£25",
+            tokens: 500,
+            note: "5p per token",
+            features: ["500 AI cover letters","Priority support","90-day validity","Biggest savings"],
+            cta: "Buy 500 tokens",
+            highlight: false,
+            packageType: 'large'
           }].map((tier)=> (
             <div key={tier.name} className={`rounded-2xl border p-6 ${tier.highlight? "border-white/40 bg-white/10" : "border-white/10 bg-white/5"}`}>
               <div className="flex items-baseline justify-between">
@@ -454,18 +799,27 @@ const Pricing = () => {
               <div className="mt-4 flex items-end gap-2">
                 <div className="text-3xl font-extrabold text-white">{tier.price}</div>
               </div>
+              {tier.tokens && (
+                <div className="mt-2 text-sm font-medium" style={{ color: mint.mid }}>
+                  {tier.tokens} tokens
+                </div>
+              )}
               <ul className="mt-6 space-y-2 text-white/80">
                 {tier.features.map(f => (
                   <li key={f} className="flex items-start gap-2"><Check className="mt-0.5 h-4 w-4" style={{ color: mint.mid }} /><span>{f}</span></li>
                 ))}
               </ul>
               <button
-                onClick={tier.action}
-                className={`mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2 font-medium ${tier.highlight? "bg-white text-slate-900" : "border border-white/20 text-white hover:bg-white/5"}`}
+                onClick={() => handleBuyTokens(tier.packageType)}
+                disabled={loading}
+                className={`mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2 font-medium disabled:opacity-50 ${tier.highlight? "bg-white text-slate-900" : "border border-white/20 text-white hover:bg-white/5"}`}
               >
-                {tier.cta}
+                {loading ? 'Processing...' : tier.cta}
                 <ArrowRight className="h-4 w-4"/>
               </button>
+              {!authToken && (
+                <p className="mt-2 text-xs text-white/50 text-center">Login required</p>
+              )}
             </div>
           ))}
         </div>
